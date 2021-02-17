@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+
+function docker_cleanup() {
+        sudo docker rm -v $(sudo docker ps -a -q -f status=exited)
+        sudo docker rmi -f  $(sudo docker images -f "dangling=true" -q)
+        docker volume ls -qf dangling=true | xargs -r docker volume rm
+}
+
+
+function cleanup_docker() {
+  docker ps -f status=exited -q | xargs -r docker rm
+  docker images -f dangling=true -q | xargs -r docker rmi
+}
+
+function cleanup_docker_aggressive() {
+  for i in $(docker images --no-trunc -q | sort -u)
+  do
+    docker rmi $i 2> /dev/null
+  done
+}
+
+
+# Determine size of a file or total size of a directory
+function fs() {
+        if du -b /dev/null > /dev/null 2>&1; then
+                local arg=-sbh;
+        else
+                local arg=-sh;
+        fi
+        if [[ -n "$@" ]]; then
+                du $arg -- "$@";
+        else
+                du $arg .[^.]* ./*;
+        fi;
+}
+
+# Create a .tar.gz archive, using `zopfli`, `pigz` or `gzip` for compression
+function targz() {
+        local tmpFile="${@%/}.tar";
+        tar -cvf "${tmpFile}" --exclude=".DS_Store" --exclude="node_modules" --exclude=".idea" "${@}" || return 1;
+
+        size=$(
+                stat -f"%z" "${tmpFile}" 2> /dev/null; # macOS `stat`
+                stat -c"%s" "${tmpFile}" 2> /dev/null;  # GNU `stat`
+        );
+
+        local cmd="";
+        if (( size < 52428800 )) && hash zopfli 2> /dev/null; then
+                # the .tar file is smaller than 50 MB and Zopfli is available; use it
+                cmd="zopfli";
+        else
+                if hash pigz 2> /dev/null; then
+                        cmd="pigz";
+                else
+                        cmd="gzip";
+                fi;
+        fi;
+
+        echo "Compressing .tar ($((size / 1000)) kB) using \`${cmd}\`…";
+        "${cmd}" -v "${tmpFile}" || return 1;
+        [ -f "${tmpFile}" ] && rm "${tmpFile}";
+
+        zippedSize=$(
+                stat -f"%z" "${tmpFile}.gz" 2> /dev/null; # macOS `stat`
+                stat -c"%s" "${tmpFile}.gz" 2> /dev/null; # GNU `stat`
+        );
+
+        echo "${tmpFile}.gz ($((zippedSize / 1000)) kB) created successfully.";
+}
+
+
+
+# Print README file
+readme() {
+    for readme in {readme,README}.{md,MD,markdown,mkd,txt,TXT}; do
+        if [[ -x "$(command -v glow)" ]] && [[ -f "$readme" ]]; then
+            mdv "$readme"
+        elif [[ -f "$readme" ]]; then
+            cat "$readme"
+        fi
+    done
+}
+
+# Get an information of IP address
+ip-address() {
+    curl -s -H "Accept: application/json" "https://ipinfo.io/${1:-}" | jq "del(.loc, .postal, .readme)"
+}
+
+topfiles() {
+
+du -M --max-depth=1 $1 | sort -n | tail -n 5
+
+}
+
+
+
+
+
